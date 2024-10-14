@@ -11,7 +11,7 @@ library(ggridges)
 library(hexbin)
 library(patchwork)
 library(reshape2)
-
+library(knitr)
 ```
 
 ### Problem 1
@@ -106,4 +106,122 @@ ny_noaa_clean %>%
   theme_minimal() +
   xlim(0, 100) +  # Set x-axis limits to range from 0 to 100 mm
   theme(legend.position = "right")  # Legend positioned to the right
+```
+
+### Problem 2
+
+Load, tidy, merge, and otherwise organize the data sets, which includes all originally observed variables; exclude participants less than 21 years of age, and those with missing demographic data; and encode data with reasonable variable classes
+
+```{r}
+# Load demographic and accelerometer datasets
+covar_data <- read_csv("data/nhanes_covar.csv", skip = 4)
+accel_data <- read_csv("data/nhanes_accel.csv")
+
+# Rename the columns for the demographic data for easier access
+colnames(covar_data) <- c("SEQN", "sex", "age", "BMI", "education")
+
+# Merge the two datasets using the SEQN column
+merged_data <- inner_join(accel_data, covar_data, by = "SEQN")
+
+# Filter participants who are older than 21 and remove rows with missing values
+filtered_data <- merged_data %>%
+  filter(age >= 21) %>%
+  drop_na()
+
+# Check the structure of the filtered data
+str(filtered_data)
+
+# Save the cleaned and filtered dataset for further use
+write_csv(filtered_data, "cleaned_filtered_data.csv")
+```
+
+From the reader-friendly table for the number of men and women in each education category, we found that most people have a "more than high school" education level. There are more female than male in both the category of "less than high school" and the category of "more than high school". For the plot that shows age distributions by sex and education, there are noticeable differences between males and females across all education levels. In the "less than high school" and "high school equivalent" groups, the distribution is more balanced between men and women. However, in the "more than high school" group, women are younger, and men tend to be older. Also, participants with higher education levels (more than high school) tend to be younger, while those with less education are more likely to be older. This suggests a correlation between younger age groups and higher levels of education, which aligns with trends in modern education accessibility and achievement.
+
+```{r}
+# Create a summary table for the number of men and women in each education category
+summary_table <- filtered_data %>%
+  group_by(education, sex) %>%
+  summarise(count = n()) %>%
+  mutate(sex = ifelse(sex == 1, "Male", "Female")) %>%
+  select(education, sex, count)
+
+# Pivot the table to make education levels as columns
+summary_table <- summary_table %>%
+  pivot_wider(names_from = education, values_from = count, 
+              names_glue = "{education}")
+
+# Print the summary table
+print(kable(summary_table, caption = "Number of Men and Women in Each Education Category"))
+
+# Recode the education and sex variables for better readability
+filtered_data$education <- factor(filtered_data$education, 
+                                  levels = c(1, 2, 3),
+                                  labels = c("Less than high school", 
+                                             "High school equivalent", 
+                                             "More than high school"))
+filtered_data$sex <- factor(filtered_data$sex, 
+                            levels = c(1, 2),
+                            labels = c("Male", "Female"))
+
+# Create a violin plot to show age distributions by sex and education
+ggplot(filtered_data, aes(x = age, fill = sex)) +
+  geom_density(alpha = 0.6) +
+  facet_wrap(~education) +
+  labs(title = "Distribution of Age by Sex and Education", 
+       x = "Age", 
+       y = "Density", 
+       fill = "Sex") +
+  theme_minimal()
+
+```
+
+The plot highlights the interplay between age, sex, and education on physical activity levels. Higher education seems to be associated with higher levels of physical activity across the lifespan, and while both sexes experience a decline in activity with age, women tend to maintain higher activity levels for longer, particularly in higher education groups. 
+
+```{r}
+# Aggregate data to get total daily activity for each participant
+filtered_data <- filtered_data %>%
+  rowwise() %>%
+  mutate(total_activity = sum(c_across(starts_with("min"))))  # Sum all minute columns for total activity
+
+# Create the plot
+ggplot(filtered_data, aes(x = age, y = total_activity, color = sex)) +
+  geom_point(alpha = 0.5) +  # Scatter plot to show individual data points
+  geom_smooth(method = "loess", se = FALSE) +  # Add a smooth trend line without confidence interval
+  facet_wrap(~education) +  # Separate panels for each education level
+  labs(
+    title = "Total Daily Activity vs Age by Sex and Education Level",
+    x = "Age",
+    y = "Total Daily Activity (MIMS)",
+    color = "Sex"
+  ) +
+  theme_minimal() +  # Use a minimal theme for a cleaner look
+  theme(
+    strip.text = element_text(face = "bold", size = 12),  # Bold facet titles
+    plot.title = element_text(face = "bold", size = 14)   # Bold plot title
+  )
+```
+
+From the 24hr activity plot, we found that the higher the education level, the more structured and prolonged the daily activity appears to be, especially in the afternoon. Participants with higher education maintain higher activity levels for longer periods. In the meantime, women tend to exhibit slightly higher activity levels than men, particularly during the peak periods of the day across all education levels. Despite minor differences in peak times and activity intensities, the general pattern of rising activity in the morning, peaking in the early afternoon, and tapering off into the evening is consistent across all groups.
+
+```{r}
+# Gather all minute columns into a long format (minute, activity)
+activity_long <- filtered_data %>%
+  pivot_longer(cols = starts_with("min"), names_to = "minute", values_to = "activity") %>%
+  mutate(minute = as.numeric(gsub("min", "", minute)))  # Convert minute columns from 'min1', 'min2', ... to numbers
+
+# Create the 24-hour activity plot for each education level
+ggplot(activity_long, aes(x = minute, y = activity, color = sex)) +
+  geom_line(alpha = 0.6, stat = "smooth", method = "loess", se = FALSE) +  # Smooth trends to make patterns clearer
+  facet_wrap(~education) +  # Separate panels by education level
+  labs(
+    title = "24-Hour Activity Time Courses by Sex and Education Level",
+    x = "Minute of the Day",
+    y = "Activity (MIMS)",
+    color = "Sex"
+  ) +
+  theme_minimal() +  # Use a minimal theme for a cleaner look
+  theme(
+    strip.text = element_text(face = "bold", size = 12),  # Bold facet titles
+    plot.title = element_text(face = "bold", size = 14)   # Bold plot title
+  )
 ```
